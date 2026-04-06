@@ -12,16 +12,18 @@ class CrossEncoderTrainer:
         model,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
         lr: float = 3e-5,
+        accumulation_steps: int = 1,
     ):
         self.model = model.to(device)
         self.device = device
         self.optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
         self.scaler = GradScaler("cuda")
         self.criterion = nn.BCELoss(reduction="none")
+        self.accumulation_steps = accumulation_steps
+        self.step_count = 0
 
     def train_step(self, batch):
         self.model.train()
-        self.optimizer.zero_grad()
 
         with autocast("cuda"):
             outputs = self.model(
@@ -36,12 +38,17 @@ class CrossEncoderTrainer:
 
         loss = self.criterion(logits, labels)
         loss = (loss * loss_mask).sum() / (loss_mask.sum() + 1e-8)
+        loss = loss / self.accumulation_steps
 
         self.scaler.scale(loss).backward()
-        self.scaler.step(self.optimizer)
-        self.scaler.update()
 
-        return {"loss": loss.item()}
+        self.step_count += 1
+        if self.step_count % self.accumulation_steps == 0:
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+            self.optimizer.zero_grad()
+
+        return {"loss": loss.item() * self.accumulation_steps}
 
     def eval_step(self, batch):
         self.model.eval()

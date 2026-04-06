@@ -50,4 +50,5 @@ def collate_fn(batch, tokenizer, device):
         "labels": labels_tensor,
         "loss_mask": loss_mask,
         "offsets": offsets,
+        "texts": texts,
     }

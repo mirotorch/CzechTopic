@@ -54,6 +54,7 @@ def main():
     parser.add_argument("--output-dir", type=Path, default=Path("output"))
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--gradient-accumulation", type=int, default=8)
     parser.add_argument("--lr", type=float, default=3e-5)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-length", type=int, default=512)
@@ -85,7 +86,9 @@ def main():
         f"Model initialized with {sum(p.numel() for p in model.parameters()):,} parameters"
     )
 
-    trainer = CrossEncoderTrainer(model, device=device, lr=args.lr)
+    trainer = CrossEncoderTrainer(
+        model, device=device, lr=args.lr, accumulation_steps=args.gradient_accumulation
+    )
 
     train_dataset = Dataset(train_data)
     val_dataset = Dataset(val_data)
@@ -130,8 +133,8 @@ def main():
             val_logits.append(out["logits"].cpu())
             val_labels.append(out["labels"].cpu())
             val_masks.append(out["mask"].cpu())
-            val_texts.extend([d["text"] for d in batch])
-            val_offsets.extend([off.numpy() for off in batch["offsets"]])
+            val_texts.extend(batch["texts"])
+            val_offsets.extend(batch["offsets"])
 
         val_logits = torch.cat(val_logits, dim=0)
         val_labels = torch.cat(val_labels, dim=0)
