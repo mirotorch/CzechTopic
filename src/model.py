@@ -10,10 +10,7 @@ Architecture:
 
 import torch
 from transformers import BertModel, PreTrainedModel
-<<<<<<< HEAD
-=======
 import torch.nn.functional as F
->>>>>>> 7a8b439 (Add training and inference pipeline)
 
 from .config import CrossEncoderConfig
 
@@ -42,14 +39,10 @@ class TopicCrossEncoder(PreTrainedModel):
         topic_hidden = hidden * topic_mask.unsqueeze(-1).float()
         text_hidden = hidden * text_mask.unsqueeze(-1).float()
 
-<<<<<<< HEAD
-        sim = torch.matmul(topic_hidden, text_hidden.transpose(-2, -1))
-=======
         topic_hidden_norm = F.normalize(topic_hidden, p=2, dim=-1)
         text_hidden_norm = F.normalize(text_hidden, p=2, dim=-1)
 
         sim = torch.matmul(topic_hidden_norm, text_hidden_norm.transpose(-2, -1))
->>>>>>> 7a8b439 (Add training and inference pipeline)
 
         topic_mask_2d = topic_mask.unsqueeze(-1).float()
         text_mask_2d = text_mask.unsqueeze(-1).float()

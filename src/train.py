@@ -11,10 +11,7 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import BertTokenizer
-<<<<<<< HEAD
-=======
 from transformers import BertModel
->>>>>>> 7a8b439 (Add training and inference pipeline)
 
 from .collate import collate_fn
 from .config import CrossEncoderConfig
@@ -37,11 +34,7 @@ def set_seed(seed: int):
 
 
 def load_data(path: Path):
-<<<<<<< HEAD
-    with open(path) as f:
-=======
     with open(path, encoding="utf-8") as f:
->>>>>>> 7a8b439 (Add training and inference pipeline)
         return [json.loads(line) for line in f]
 
 
@@ -82,23 +75,12 @@ def main():
     tokenizer = BertTokenizer.from_pretrained("bert-base-multilingual-cased")
     tokenizer_wrapper = CrossEncoderTokenizer(tokenizer, max_length=args.max_length)
 
-<<<<<<< HEAD
-    config = CrossEncoderConfig(
-        vocab_size=tokenizer.vocab_size,
-        hidden_size=768,
-        num_attention_heads=12,
-        num_hidden_layers=4,
-        intermediate_size=3072,
-    )
-    model = TopicCrossEncoder(config)
-=======
     pretrained_bert = BertModel.from_pretrained("bert-base-multilingual-cased")
     
     config = CrossEncoderConfig(**pretrained_bert.config.to_dict())
     model = TopicCrossEncoder(config)
     
     model.bert = pretrained_bert
->>>>>>> 7a8b439 (Add training and inference pipeline)
     logger.info(
         f"Model initialized with {sum(p.numel() for p in model.parameters()):,} parameters"
     )

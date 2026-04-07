@@ -212,9 +212,6 @@ __marimo__/
 
 # Dataset
 dataset
-<<<<<<< HEAD
-=======
 
 # Model artifacts
 model/
->>>>>>> 7a8b439 (Add training and inference pipeline)
