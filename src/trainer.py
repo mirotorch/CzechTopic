@@ -36,8 +36,18 @@ class CrossEncoderTrainer:
         labels = batch["labels"]
         loss_mask = batch["loss_mask"]
 
+<<<<<<< HEAD
         loss = self.criterion(logits, labels)
         loss = (loss * loss_mask).sum() / (loss_mask.sum() + 1e-8)
+=======
+        POSITIVE_WEIGHT = 15.0 
+        weights = torch.ones_like(labels)
+        weights[labels == 1.0] = POSITIVE_WEIGHT
+
+        loss = self.criterion(logits, labels)
+        
+        loss = (loss * weights * loss_mask).sum() / (loss_mask.sum() + 1e-8)
+>>>>>>> 7a8b439 (Add training and inference pipeline)
         loss = loss / self.accumulation_steps
 
         self.scaler.scale(loss).backward()
