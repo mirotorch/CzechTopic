@@ -12,8 +12,12 @@ class BaselineDotProductMatcher(nn.Module):
         e_text_norm = F.normalize(e_text, p=2, dim=-1)
         e_topic_norm = F.normalize(e_topic, p=2, dim=-1)
         similarity_matrix = torch.matmul(e_text_norm, e_topic_norm.transpose(1, 2))
-        best_scores, _ = torch.max(similarity_matrix, dim=2)
-        return best_scores
+        
+        k = min(3, similarity_matrix.size(2))
+        top_k_values = torch.topk(similarity_matrix, k=k, dim=2).values
+        sim_agg = top_k_values.mean(dim=2)
+        
+        return sim_agg
 
 
 def smooth_highlights(binary_predictions):

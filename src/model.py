@@ -50,8 +50,11 @@ class TopicCrossEncoder(PreTrainedModel):
 
         sim = sim.masked_fill(sim_mask == 0, float("-inf"))
 
-        sim_max = sim.max(dim=1).values
-        scores = torch.sigmoid(sim_max)
+        k = min(3, sim.size(1))
+        top_k_values = torch.topk(sim, k=k, dim=1).values
+        sim_agg = top_k_values.mean(dim=1)
+        
+        scores = torch.sigmoid((sim_agg - 0.5) * 10.0)
 
         scores = scores * text_mask.float()
 

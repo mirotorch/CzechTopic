@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import random
+import wandb
 from pathlib import Path
 
 import numpy as np
@@ -62,6 +63,13 @@ def main():
     parser.add_argument("--patience", type=int, default=1)
     args = parser.parse_args()
 
+    wandb.init(
+        project="czech-topic-cross-encoder", # Name of your project in W&B
+        config=vars(args),                   # Automatically logs all your hyperparameters!
+        name=f"lr-{args.lr}_bs-{args.batch_size}" # Gives the run a readable name
+    )
+    set_seed(args.seed)
+
     set_seed(args.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     logger.info(f"Using device: {device}")
@@ -114,6 +122,8 @@ def main():
         avg_train_loss = np.mean(train_losses)
         logger.info(f"Train loss: {avg_train_loss:.4f}")
 
+        wandb.log({"train/loss": avg_train_loss, "epoch": epoch + 1}, commit=False)
+
         val_logits = []
         val_labels = []
         val_masks = []
@@ -139,7 +149,7 @@ def main():
         val_labels = torch.cat(val_labels, dim=0)
         val_masks = torch.cat(val_masks, dim=0)
 
-        thresholds = [i * 0.05 for i in range(1, 11)]
+        thresholds = [i * 0.05 for i in range(1, 20)]
         best_val_f1 = 0.0
         best_epoch_threshold = 0.5
 
@@ -170,12 +180,18 @@ def main():
             f"Val word-F1: {best_val_f1:.4f} @ threshold={best_epoch_threshold:.2f}"
         )
 
+        wandb.log({
+            "val/f1": best_val_f1,
+            "val/best_threshold": best_epoch_threshold,
+            "epoch": epoch + 1
+        })
+
         if best_val_f1 > best_f1:
             best_f1 = best_val_f1
             best_threshold = best_epoch_threshold
             patience_counter = 0
             torch.save(model.state_dict(), args.output_dir / "best_model.pt")
-            logger.info(f"Saved best model (F1={best_f1:.4f})")
+            logger.info(f"Saved best model (F1={best_f1:.4f}), best threshold is {best_threshold}")
         else:
             patience_counter += 1
             logger.info(f"No improvement. Patience: {patience_counter}/{args.patience}")
@@ -189,41 +205,43 @@ def main():
     model.load_state_dict(torch.load(args.output_dir / "best_model.pt"))
     model.eval()
 
-    predictions = []
-    for item in tqdm(val_data, desc="Generating predictions"):
-        encoded = tokenizer_wrapper.encode_single(
-            item["topic_name"] + " " + item["topic_description"], item["text"]
-        )
+    # predictions = []
+    # for item in tqdm(val_data, desc="Generating predictions"):
+    #     encoded = tokenizer_wrapper.encode_single(
+    #         item["topic_name"] + " " + item["topic_description"], item["text"]
+    #     )
 
-        with torch.no_grad():
-            inputs = {
-                "input_ids": encoded["input_ids"].unsqueeze(0).to(device),
-                "attention_mask": encoded["attention_mask"].unsqueeze(0).to(device),
-                "token_type_ids": encoded["token_type_ids"].unsqueeze(0).to(device),
-            }
-            out = model(**inputs)
-            probs = out["logits"].squeeze(0).cpu().numpy()
+    #     with torch.no_grad():
+    #         inputs = {
+    #             "input_ids": encoded["input_ids"].unsqueeze(0).to(device),
+    #             "attention_mask": encoded["attention_mask"].unsqueeze(0).to(device),
+    #             "token_type_ids": encoded["token_type_ids"].unsqueeze(0).to(device),
+    #         }
+    #         out = model(**inputs)
+    #         probs = out["logits"].squeeze(0).cpu().numpy()
 
-        annotations = predictions_to_spans(
-            item["text"], probs, encoded["offsets"].numpy(), threshold=best_threshold
-        )
+    #     annotations = predictions_to_spans(
+    #         item["text"], probs, encoded["offsets"].numpy(), threshold=best_threshold
+    #     )
 
-        predictions.append(
-            {
-                "text_id": item["text_id"],
-                "topic_id": item["topic_id"],
-                "cluster_id": item["cluster_id"],
-                "text": item["text"],
-                "annotations": annotations,
-            }
-        )
+    #     predictions.append(
+    #         {
+    #             "text_id": item["text_id"],
+    #             "topic_id": item["topic_id"],
+    #             "cluster_id": item["cluster_id"],
+    #             "text": item["text"],
+    #             "annotations": annotations,
+    #         }
+    #     )
 
-    output_path = args.output_dir / "predictions.jsonl"
-    with open(output_path, "w") as f:
-        for pred in predictions:
-            f.write(json.dumps(pred) + "\n")
+    # output_path = args.output_dir / "predictions.jsonl"
+    # with open(output_path, "w") as f:
+    #     for pred in predictions:
+    #         f.write(json.dumps(pred) + "\n")
 
-    logger.info(f"Predictions saved to {output_path}")
+    # logger.info(f"Predictions saved to {output_path}")
+
+    wandb.finish()
 
 
 if __name__ == "__main__":

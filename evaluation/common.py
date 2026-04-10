@@ -20,7 +20,7 @@ METRIC_COLS = [
 
 
 def load_jsonl(path: Path) -> list[dict]:
-    with path.open("r") as f:
+    with path.open("r", encoding="utf-8") as f:
         return [json.loads(line) for line in f]
     
 
