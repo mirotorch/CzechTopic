@@ -6,7 +6,7 @@ from pathlib import Path
 
 import torch
 from tqdm import tqdm
-from transformers import BertTokenizer
+from transformers import AutoTokenizer, AutoModel, AutoConfig
 
 from .config import CrossEncoderConfig
 from .model import TopicCrossEncoder
@@ -18,6 +18,7 @@ from .tokenizer import CrossEncoderTokenizer
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-path", type=Path, required=True)
+    parser.add_argument("--model-name", type=str, default="bert-base-multilingual-cased")
     parser.add_argument("--data-dir", type=Path, required=True)
     parser.add_argument("--output-path", type=Path, required=True)
     parser.add_argument("--threshold", type=float, default=0.5)
@@ -34,17 +35,15 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
-    tokenizer = BertTokenizer.from_pretrained("bert-base-multilingual-cased")
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     tokenizer_wrapper = CrossEncoderTokenizer(tokenizer, max_length=args.max_length)
 
-    config = CrossEncoderConfig(
-        vocab_size=tokenizer.vocab_size,
-        hidden_size=768,
-        num_attention_heads=12,
-        num_hidden_layers=4,
-        intermediate_size=3072,
-    )
-    model = TopicCrossEncoder(config, technique=args.technique)
+    base_config = AutoConfig.from_pretrained(args.model_name)
+    encoder = AutoModel.from_pretrained(args.model_name)
+    config_dict = base_config.to_dict()
+    config_dict['sep_token_id'] = tokenizer.sep_token_id
+    config = CrossEncoderConfig(**config_dict)
+    model = TopicCrossEncoder(config, technique=args.technique, encoder=encoder)
     model.load_state_dict(torch.load(args.model_path, map_location=device))
     model.to(device)
     model.eval()
@@ -68,7 +67,6 @@ def main():
             inputs = {
                 "input_ids": encoded["input_ids"].unsqueeze(0).to(device),
                 "attention_mask": encoded["attention_mask"].unsqueeze(0).to(device),
-                "token_type_ids": encoded["token_type_ids"].unsqueeze(0).to(device),
             }
             out = model(**inputs)
             probs = out["logits"].squeeze(0).cpu().numpy()

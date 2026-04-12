@@ -1,7 +1,7 @@
 import torch
 import json
 import pandas as pd
-from transformers import AutoTokenizer, AutoConfig
+from transformers import AutoTokenizer, AutoConfig, AutoModel
 from tqdm import tqdm
 
 from .config import CrossEncoderConfig
@@ -15,27 +15,41 @@ def smooth_highlights(binary_predictions):
     return binary_predictions
 
 def main():
+    import argparse
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model-name", type=str, default="bert-base-multilingual-cased",
+                        help="Pretrained model name (e.g., bert-base-multilingual-cased, robeczech)")
+    parser.add_argument("--checkpoint-path", type=str, default="./output/best_model_top3.pt")
+    parser.add_argument("--texts-csv", type=str, default="./dataset/test-dataset/texts.csv")
+    parser.add_argument("--topics-csv", type=str, default="./dataset/test-dataset/topics.csv")
+    parser.add_argument("--output-file", type=str, default="./output/predictions.jsonl")
+    parser.add_argument("--threshold", type=float, default=0.90)
+    args = parser.parse_args()
+    
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    model_name = "bert-base-multilingual-cased"
+    model_name = args.model_name
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     
     base_config = AutoConfig.from_pretrained(model_name)
-    config = CrossEncoderConfig(**base_config.to_dict())
+    config_dict = base_config.to_dict()
+    config_dict['sep_token_id'] = tokenizer.sep_token_id
+    config = CrossEncoderConfig(**config_dict)
     
     model = TopicCrossEncoder(config, technique="top3")
     
-    checkpoint_path = "./output/best_model_top3.pt"
+    checkpoint_path = args.checkpoint_path
     print(f"Loading trained weights from {checkpoint_path}...")
     model.load_state_dict(torch.load(checkpoint_path, map_location=device))
     
     model.to(device)
     model.eval()
 
-    texts_csv_path = "./dataset/test-dataset/texts.csv"
-    topics_csv_path = "./dataset/test-dataset/topics.csv"
-    output_file = "./output/predictions.jsonl"
+    texts_csv_path = args.texts_csv
+    topics_csv_path = args.topics_csv
+    output_file = args.output_file
     
     print(f"Reading CSVs and grouping by cluster...")
     texts_df = pd.read_csv(texts_csv_path, sep='\t', encoding='utf-8')
@@ -71,16 +85,25 @@ def main():
                 outputs = model(
                     input_ids=inputs['input_ids'], 
                     attention_mask=inputs['attention_mask'],
-                    token_type_ids=inputs['token_type_ids']
                 )
                 scores = outputs["logits"]
 
-            sep_idx = (inputs['input_ids'][0] == tokenizer.sep_token_id).nonzero(as_tuple=True)[0][0].item()
+            sep_positions = (inputs['input_ids'][0] == tokenizer.sep_token_id).nonzero(as_tuple=True)[0]
+            
+            if len(sep_positions) >= 2:
+                first_sep = sep_positions[0].item()
+                second_sep = sep_positions[1].item()
+                text_probs = scores[0, first_sep + 1: second_sep].tolist()
+                text_offsets = inputs['offset_mapping'][0, first_sep + 1: second_sep].tolist()
+            elif len(sep_positions) == 1:
+                first_sep = sep_positions[0].item()
+                text_probs = scores[0, first_sep + 1: -1].tolist()
+                text_offsets = inputs['offset_mapping'][0, first_sep + 1: -1].tolist()
+            else:
+                text_probs = scores[0].tolist()
+                text_offsets = inputs['offset_mapping'][0].tolist()
 
-            text_probs = scores[0, sep_idx + 1: -1].tolist()
-            text_offsets = inputs['offset_mapping'][0, sep_idx + 1: -1].tolist()
-
-            binary_preds = [1 if p >= 0.90 else 0 for p in text_probs]
+            binary_preds = [1 if p >= args.threshold else 0 for p in text_probs]
             smoothed_preds = smooth_highlights(binary_preds)
 
             annotations = []

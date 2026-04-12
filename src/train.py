@@ -4,15 +4,15 @@ import argparse
 import json
 import logging
 import random
-import wandb
 from pathlib import Path
 
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from transformers import BertTokenizer
-from transformers import BertModel
+from transformers import AutoConfig, AutoModel, AutoTokenizer
+
+import wandb
 
 from .collate import collate_fn
 from .config import CrossEncoderConfig
@@ -59,7 +59,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", type=Path, default=Path("dataset/dev-dataset"))
     parser.add_argument("--output-dir", type=Path, default=Path("output"))
-    parser.add_argument("--epochs", type=int, default=3)
+    parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--gradient-accumulation", type=int, default=8)
     parser.add_argument("--lr", type=float, default=3e-5)
@@ -73,12 +73,18 @@ def main():
         choices=sorted(TECHNIQUE_FACTORIES),
         help="Pooling technique defined in techniques.py",
     )
+    parser.add_argument(
+        "--model-name",
+        type=str,
+        default="bert-base-multilingual-cased",
+        help="Pretrained model name (e.g., bert-base-multilingual-cased, robeczech)",
+    )
     args = parser.parse_args()
 
     wandb.init(
-        project="czech-topic-cross-encoder", # Name of your project in W&B
-        config=vars(args),                   # Automatically logs all your hyperparameters!
-        name=f"lr-{args.lr}_bs-{args.batch_size}" # Gives the run a readable name
+        project="czech-topic-cross-encoder",  # Name of your project in W&B
+        config=vars(args),  # Automatically logs all your hyperparameters!
+        name=f"lr-{args.lr}_bs-{args.batch_size}",  # Gives the run a readable name
     )
     set_seed(args.seed)
 
@@ -91,16 +97,17 @@ def main():
     val_data = load_data(args.data_dir / "val.jsonl")
     logger.info(f"Loaded {len(train_data)} train, {len(val_data)} val samples")
 
-    tokenizer = BertTokenizer.from_pretrained("bert-base-multilingual-cased")
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     tokenizer_wrapper = CrossEncoderTokenizer(tokenizer, max_length=args.max_length)
 
-    pretrained_bert = BertModel.from_pretrained("bert-base-multilingual-cased")
-    
-    config = CrossEncoderConfig(**pretrained_bert.config.to_dict())
-    model = TopicCrossEncoder(config, technique=args.technique)
+    pretrained_bert = AutoModel.from_pretrained(args.model_name)
+
+    config_dict = pretrained_bert.config.to_dict()
+    config_dict["sep_token_id"] = tokenizer.sep_token_id
+    config = CrossEncoderConfig(**config_dict)
+    model = TopicCrossEncoder(config, technique=args.technique, encoder=pretrained_bert)
     checkpoint_path = get_checkpoint_path(args.output_dir, args.technique)
-    
-    model.bert = pretrained_bert
+
     logger.info(
         f"Model initialized with {sum(p.numel() for p in model.parameters()):,} parameters"
     )
@@ -193,11 +200,13 @@ def main():
             f"Val word-F1: {best_val_f1:.4f} @ threshold={best_epoch_threshold:.2f}"
         )
 
-        wandb.log({
-            "val/f1": best_val_f1,
-            "val/best_threshold": best_epoch_threshold,
-            "epoch": epoch + 1
-        })
+        wandb.log(
+            {
+                "val/f1": best_val_f1,
+                "val/best_threshold": best_epoch_threshold,
+                "epoch": epoch + 1,
+            }
+        )
 
         if best_val_f1 > best_f1:
             best_f1 = best_val_f1

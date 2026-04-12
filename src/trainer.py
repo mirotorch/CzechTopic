@@ -29,7 +29,6 @@ class CrossEncoderTrainer:
             outputs = self.model(
                 input_ids=batch["input_ids"],
                 attention_mask=batch["attention_mask"],
-                token_type_ids=batch["token_type_ids"],
             )
 
         logits = outputs["logits"]
@@ -62,7 +61,6 @@ class CrossEncoderTrainer:
                 outputs = self.model(
                     input_ids=batch["input_ids"],
                     attention_mask=batch["attention_mask"],
-                    token_type_ids=batch["token_type_ids"],
                 )
 
         logits = outputs["logits"]
