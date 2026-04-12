@@ -11,6 +11,7 @@ from transformers import BertTokenizer
 from .config import CrossEncoderConfig
 from .model import TopicCrossEncoder
 from .predict import predictions_to_spans
+from .techniques import TECHNIQUE_FACTORIES
 from .tokenizer import CrossEncoderTokenizer
 
 
@@ -21,6 +22,13 @@ def main():
     parser.add_argument("--output-path", type=Path, required=True)
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--max-length", type=int, default=512)
+    parser.add_argument(
+        "--technique",
+        type=str,
+        default="max",
+        choices=sorted(TECHNIQUE_FACTORIES),
+        help="Pooling technique defined in techniques.py",
+    )
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -36,7 +44,7 @@ def main():
         num_hidden_layers=4,
         intermediate_size=3072,
     )
-    model = TopicCrossEncoder(config)
+    model = TopicCrossEncoder(config, technique=args.technique)
     model.load_state_dict(torch.load(args.model_path, map_location=device))
     model.to(device)
     model.eval()

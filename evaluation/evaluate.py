@@ -74,7 +74,7 @@ def main():
     args = parse_args()
 
     logger.info(f"Loading predictions from {args.pred} ...")
-    with args.pred.open("r") as f:
+    with args.pred.open("r", encoding="utf-8") as f:
         pred = [json.loads(line) for line in f]
     logger.info(f"Loaded {len(pred)} samples from predictions data.")
 

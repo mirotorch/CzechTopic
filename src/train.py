@@ -18,6 +18,7 @@ from .collate import collate_fn
 from .config import CrossEncoderConfig
 from .model import TopicCrossEncoder
 from .predict import calculate_word_f1, predictions_to_spans
+from .techniques import TECHNIQUE_FACTORIES
 from .tokenizer import CrossEncoderTokenizer
 from .trainer import CrossEncoderTrainer
 
@@ -37,6 +38,10 @@ def set_seed(seed: int):
 def load_data(path: Path):
     with open(path, encoding="utf-8") as f:
         return [json.loads(line) for line in f]
+
+
+def get_checkpoint_path(output_dir: Path, technique: str) -> Path:
+    return output_dir / f"best_model_{technique}.pt"
 
 
 class Dataset(torch.utils.data.Dataset):
@@ -61,6 +66,13 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-length", type=int, default=512)
     parser.add_argument("--patience", type=int, default=1)
+    parser.add_argument(
+        "--technique",
+        type=str,
+        default="max",
+        choices=sorted(TECHNIQUE_FACTORIES),
+        help="Pooling technique defined in techniques.py",
+    )
     args = parser.parse_args()
 
     wandb.init(
@@ -70,7 +82,6 @@ def main():
     )
     set_seed(args.seed)
 
-    set_seed(args.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     logger.info(f"Using device: {device}")
 
@@ -86,12 +97,14 @@ def main():
     pretrained_bert = BertModel.from_pretrained("bert-base-multilingual-cased")
     
     config = CrossEncoderConfig(**pretrained_bert.config.to_dict())
-    model = TopicCrossEncoder(config)
+    model = TopicCrossEncoder(config, technique=args.technique)
+    checkpoint_path = get_checkpoint_path(args.output_dir, args.technique)
     
     model.bert = pretrained_bert
     logger.info(
         f"Model initialized with {sum(p.numel() for p in model.parameters()):,} parameters"
     )
+    logger.info(f"Using pooling technique: {args.technique}")
 
     trainer = CrossEncoderTrainer(
         model, device=device, lr=args.lr, accumulation_steps=args.gradient_accumulation
@@ -190,8 +203,11 @@ def main():
             best_f1 = best_val_f1
             best_threshold = best_epoch_threshold
             patience_counter = 0
-            torch.save(model.state_dict(), args.output_dir / "best_model.pt")
-            logger.info(f"Saved best model (F1={best_f1:.4f}), best threshold is {best_threshold}")
+            torch.save(model.state_dict(), checkpoint_path)
+            logger.info(
+                f"Saved best model to {checkpoint_path.name} (F1={best_f1:.4f}), "
+                f"best threshold is {best_threshold}"
+            )
         else:
             patience_counter += 1
             logger.info(f"No improvement. Patience: {patience_counter}/{args.patience}")
@@ -202,44 +218,8 @@ def main():
 
     logger.info(f"\nTraining complete. Best val F1: {best_f1:.4f}")
 
-    model.load_state_dict(torch.load(args.output_dir / "best_model.pt"))
+    model.load_state_dict(torch.load(checkpoint_path, map_location=device))
     model.eval()
-
-    # predictions = []
-    # for item in tqdm(val_data, desc="Generating predictions"):
-    #     encoded = tokenizer_wrapper.encode_single(
-    #         item["topic_name"] + " " + item["topic_description"], item["text"]
-    #     )
-
-    #     with torch.no_grad():
-    #         inputs = {
-    #             "input_ids": encoded["input_ids"].unsqueeze(0).to(device),
-    #             "attention_mask": encoded["attention_mask"].unsqueeze(0).to(device),
-    #             "token_type_ids": encoded["token_type_ids"].unsqueeze(0).to(device),
-    #         }
-    #         out = model(**inputs)
-    #         probs = out["logits"].squeeze(0).cpu().numpy()
-
-    #     annotations = predictions_to_spans(
-    #         item["text"], probs, encoded["offsets"].numpy(), threshold=best_threshold
-    #     )
-
-    #     predictions.append(
-    #         {
-    #             "text_id": item["text_id"],
-    #             "topic_id": item["topic_id"],
-    #             "cluster_id": item["cluster_id"],
-    #             "text": item["text"],
-    #             "annotations": annotations,
-    #         }
-    #     )
-
-    # output_path = args.output_dir / "predictions.jsonl"
-    # with open(output_path, "w") as f:
-    #     for pred in predictions:
-    #         f.write(json.dumps(pred) + "\n")
-
-    # logger.info(f"Predictions saved to {output_path}")
 
     wandb.finish()
 

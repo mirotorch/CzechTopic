@@ -13,12 +13,18 @@ from transformers import BertModel, PreTrainedModel
 import torch.nn.functional as F
 
 from .config import CrossEncoderConfig
+from .techniques import TECHNIQUE_FACTORIES
 
 
 class TopicCrossEncoder(PreTrainedModel):
-    def __init__(self, config: CrossEncoderConfig):
+    def __init__(self, config: CrossEncoderConfig, technique: str = "max"):
         super().__init__(config)
         self.bert = BertModel(config)
+        self.technique = technique
+        self.pooler = TECHNIQUE_FACTORIES[technique]()
+        
+        self.temperature = 10.0
+        self.bias = 0.5
 
     def forward(
         self,
@@ -50,11 +56,10 @@ class TopicCrossEncoder(PreTrainedModel):
 
         sim = sim.masked_fill(sim_mask == 0, float("-inf"))
 
-        k = min(3, sim.size(1))
-        top_k_values = torch.topk(sim, k=k, dim=1).values
-        sim_agg = top_k_values.mean(dim=1)
-        
-        scores = torch.sigmoid((sim_agg - 0.5) * 10.0)
+        sim_agg = self.pooler(sim)
+        scores = torch.sigmoid((sim_agg - self.bias) * self.temperature)
+
+        scores = torch.clamp(scores, min=1e-7, max=1.0 - 1e-7)
 
         scores = scores * text_mask.float()
 
