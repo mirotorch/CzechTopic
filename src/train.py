@@ -40,8 +40,8 @@ def load_data(path: Path):
         return [json.loads(line) for line in f]
 
 
-def get_checkpoint_path(output_dir: Path, technique: str) -> Path:
-    return output_dir / f"best_model_{technique}.pt"
+def get_checkpoint_path(output_dir: Path, technique: str, model_name: str) -> Path:
+    return output_dir / f"best_model_{technique}_{model_name}.pt"
 
 
 class Dataset(torch.utils.data.Dataset):
@@ -106,7 +106,7 @@ def main():
     config_dict["sep_token_id"] = tokenizer.sep_token_id
     config = CrossEncoderConfig(**config_dict)
     model = TopicCrossEncoder(config, technique=args.technique, encoder=pretrained_bert)
-    checkpoint_path = get_checkpoint_path(args.output_dir, args.technique)
+    checkpoint_path = get_checkpoint_path(args.output_dir, args.technique, args.model_name)
 
     logger.info(
         f"Model initialized with {sum(p.numel() for p in model.parameters()):,} parameters"
