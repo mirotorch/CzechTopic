@@ -41,7 +41,8 @@ def load_data(path: Path):
 
 
 def get_checkpoint_path(output_dir: Path, technique: str, model_name: str) -> Path:
-    return output_dir / f"best_model_{technique}_{model_name}.pt"
+    safe_model_name = model_name.replace("/", "-")
+    return output_dir / f"best_model_{technique}_{safe_model_name}.pt"
 
 
 class Dataset(torch.utils.data.Dataset):
