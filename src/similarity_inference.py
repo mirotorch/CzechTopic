@@ -5,6 +5,7 @@ from transformers import AutoTokenizer, AutoConfig
 from tqdm import tqdm
 import argparse
 
+from .checkpoints import load_checkpoint
 from .config import CrossEncoderConfig
 from .model import TopicCrossEncoder
 
@@ -32,11 +33,17 @@ def main():
     parser.add_argument("--texts-csv", type=str, default="./dataset/test-dataset/texts.csv")
     parser.add_argument("--topics-csv", type=str, default="./dataset/test-dataset/topics.csv")
     parser.add_argument("--output-file", type=str, default="./output/predictions.jsonl")
-    parser.add_argument("--threshold", type=float, default=0.90)
+    parser.add_argument("--threshold", type=float, default=None)
     parser.add_argument("--technique", type=str, default="top3")
     args = parser.parse_args()
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
+
     print(f"Using device: {device}")
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
@@ -47,10 +54,15 @@ def main():
     model = TopicCrossEncoder(config, technique=args.technique)
     
     print(f"Loading trained weights from {args.model_path}...")
-    model.load_state_dict(torch.load(args.model_path, map_location=device))
+    checkpoint = load_checkpoint(args.model_path, map_location=device)
+    model.load_state_dict(checkpoint["model_state_dict"])
+    threshold = (
+        args.threshold if args.threshold is not None else checkpoint.get("threshold", 0.90)
+    )
     
     model.to(device)
     model.eval()
+    print(f"Using threshold: {threshold:.2f}")
 
     print(f"Reading CSVs and grouping by cluster...")
     texts_df = pd.read_csv(args.texts_csv, sep='\t', encoding='utf-8')
@@ -107,7 +119,7 @@ def main():
                 text_ids = inputs['input_ids'][0].tolist()
 
             text_tokens = tokenizer.convert_ids_to_tokens(text_ids)
-            binary_preds = [1 if p >= args.threshold else 0 for p in text_probs]
+            binary_preds = [1 if p >= threshold else 0 for p in text_probs]
             
             expanded_preds = expand_subword_highlights(binary_preds, text_tokens)
             smoothed_preds = smooth_highlights(expanded_preds)

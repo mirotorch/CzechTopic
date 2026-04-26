@@ -49,11 +49,124 @@ class Conv1DPooler(nn.Module):
         
         return phrase_scores.max(dim=1).values
 
+class SpanExtractionPooler(nn.Module):
+    """Scores candidate text spans against a topic vector and projects them back to tokens."""
+
+    def __init__(self, hidden_size=768, max_span_length=4, length_embedding_size=32):
+        super().__init__()
+        self.max_span_length = max_span_length
+        self.length_embedding = nn.Embedding(max_span_length + 1, length_embedding_size)
+        self.mlp = nn.Sequential(
+            nn.Linear(hidden_size * 3 + length_embedding_size, hidden_size),
+            nn.GELU(),
+            nn.Linear(hidden_size, 1),
+        )
+
+    def forward(self, hidden_states, topic_vector, text_mask):
+        """
+        hidden_states: [batch_size, sequence_length, hidden_size]
+        topic_vector: [batch_size, hidden_size]
+        text_mask: [batch_size, sequence_length]
+        """
+        batch_size, seq_len, hidden_size = hidden_states.size()
+        token_scores = hidden_states.new_full((batch_size, seq_len), float("-inf"))
+        span_scores_per_batch = []
+        span_indices_per_batch = []
+
+        for batch_idx in range(batch_size):
+            text_positions = torch.nonzero(text_mask[batch_idx], as_tuple=False).flatten()
+            if text_positions.numel() == 0:
+                span_scores_per_batch.append(hidden_states.new_empty((0,)))
+                span_indices_per_batch.append(hidden_states.new_empty((0, 2), dtype=torch.long))
+                continue
+
+            start_positions = []
+            end_positions = []
+            span_lengths = []
+
+            for start_offset in range(text_positions.numel()):
+                max_end_offset = min(
+                    start_offset + self.max_span_length,
+                    text_positions.numel(),
+                )
+                for end_offset in range(start_offset, max_end_offset):
+                    start_positions.append(text_positions[start_offset].item())
+                    end_positions.append(text_positions[end_offset].item())
+                    span_lengths.append(end_offset - start_offset + 1)
+
+            span_indices = torch.tensor(
+                list(zip(start_positions, end_positions)),
+                device=hidden_states.device,
+                dtype=torch.long,
+            )
+            span_lengths = torch.tensor(
+                span_lengths,
+                device=hidden_states.device,
+                dtype=torch.long,
+            )
+
+            start_vectors = hidden_states[batch_idx, span_indices[:, 0], :]
+            end_vectors = hidden_states[batch_idx, span_indices[:, 1], :]
+            repeated_topic = topic_vector[batch_idx].unsqueeze(0).expand_as(start_vectors)
+            length_vectors = self.length_embedding(span_lengths)
+
+            span_features = torch.cat(
+                [repeated_topic, start_vectors, end_vectors, length_vectors],
+                dim=-1,
+            )
+            span_scores = self.mlp(span_features).squeeze(-1)
+
+            for span_idx, (start_pos, end_pos) in enumerate(span_indices.tolist()):
+                token_scores[batch_idx, start_pos : end_pos + 1] = torch.maximum(
+                    token_scores[batch_idx, start_pos : end_pos + 1],
+                    span_scores[span_idx],
+                )
+
+            span_scores_per_batch.append(span_scores)
+            span_indices_per_batch.append(span_indices)
+
+        token_scores = token_scores.masked_fill(~text_mask, float("-inf"))
+        return {
+            "token_scores": token_scores,
+            "span_scores": span_scores_per_batch,
+            "span_indices": span_indices_per_batch,
+        }
+
+def apply_nms(spans, scores, threshold=0.85):
+    """
+    Filters overlapping predictions, keeping only the best ones.
+    spans: List of tuples (start_idx, end_idx)
+    scores: List of floats (cosine similarity scores)
+    """
+    valid_predictions = [(span, score) for span, score in zip(spans, scores) if score >= threshold]
+    valid_predictions.sort(key=lambda x: x[1], reverse=True)
+
+    approved_spans = []
+
+    for current_span, current_score in valid_predictions:
+        overlap = False
+        current_start, current_end = current_span
+
+        for approved_span, _ in approved_spans:
+            app_start, app_end = approved_span
+            if current_start <= app_end and current_end >= app_start:
+                overlap = True
+                break
+
+        if not overlap:
+            approved_spans.append((current_span, current_score))
+
+    return approved_spans
+
 TECHNIQUE_FACTORIES = {
-    "max": lambda: MaxPooler(),
-    "mean": lambda: MeanPooler(),
-    "top3": lambda: TopKPooler(k=3),
-    "top5": lambda: TopKPooler(k=5),
-    "conv2": lambda: Conv1DPooler(window_size=2),
-    "conv3": lambda: Conv1DPooler(window_size=3)
+    "max": lambda **_: MaxPooler(),
+    "mean": lambda **_: MeanPooler(),
+    "top3": lambda **_: TopKPooler(k=3),
+    "top5": lambda **_: TopKPooler(k=5),
+    "conv2": lambda **_: Conv1DPooler(window_size=2),
+    "conv3": lambda **_: Conv1DPooler(window_size=3),
+    "span": lambda hidden_size=768, max_span_length=4, **_: SpanExtractionPooler(
+        hidden_size=hidden_size,
+        max_span_length=max_span_length,
+    ),
 }

@@ -60,14 +60,23 @@ def get_segment_masks(input_ids, attention_mask, sep_token_id):
 
 
 class TopicCrossEncoder(PreTrainedModel):
-    def __init__(self, config: CrossEncoderConfig, technique: str = "max", encoder=None):
+    def __init__(
+        self,
+        config: CrossEncoderConfig,
+        technique: str = "max",
+        encoder=None,
+        max_span_length: int = 4,
+    ):
         super().__init__(config)
         if encoder is not None:
             self.bert = encoder
         else:
             self.bert = AutoModel.from_config(config)
         self.technique = technique
-        self.pooler = TECHNIQUE_FACTORIES[technique]()
+        self.pooler = TECHNIQUE_FACTORIES[technique](
+            hidden_size=self.bert.config.hidden_size,
+            max_span_length=max_span_length,
+        )
         
         self.temperature = 10.0
         self.bias = 0.5
@@ -105,22 +114,35 @@ class TopicCrossEncoder(PreTrainedModel):
         topic_hidden = hidden * topic_mask.unsqueeze(-1).float()
         text_hidden = hidden * text_mask.unsqueeze(-1).float()
 
-        topic_hidden_norm = F.normalize(topic_hidden, p=2, dim=-1)
-        text_hidden_norm = F.normalize(text_hidden, p=2, dim=-1)
+        if self.technique == "span":
+            topic_vector = hidden[:, 0, :]
+            pooled = self.pooler(
+                hidden_states=hidden,
+                topic_vector=topic_vector,
+                text_mask=text_mask,
+            )
+            sim_agg = pooled["token_scores"]
+        else:
+            topic_hidden_norm = F.normalize(topic_hidden, p=2, dim=-1)
+            text_hidden_norm = F.normalize(text_hidden, p=2, dim=-1)
 
-        sim = torch.matmul(topic_hidden_norm, text_hidden_norm.transpose(-2, -1))
+            sim = torch.matmul(topic_hidden_norm, text_hidden_norm.transpose(-2, -1))
 
-        topic_mask_2d = topic_mask.unsqueeze(-1).float()
-        text_mask_2d = text_mask.unsqueeze(-1).float()
-        sim_mask = torch.matmul(topic_mask_2d, text_mask_2d.transpose(-2, -1))
+            topic_mask_2d = topic_mask.unsqueeze(-1).float()
+            text_mask_2d = text_mask.unsqueeze(-1).float()
+            sim_mask = torch.matmul(topic_mask_2d, text_mask_2d.transpose(-2, -1))
 
-        sim = sim.masked_fill(sim_mask == 0, float("-inf"))
+            sim = sim.masked_fill(sim_mask == 0, float("-inf"))
 
-        sim_agg = self.pooler(sim)
+            sim_agg = self.pooler(sim)
         scores = torch.sigmoid((sim_agg - self.bias) * self.temperature)
 
         scores = torch.clamp(scores, min=1e-7, max=1.0 - 1e-7)
 
         scores = scores * text_mask.float()
 
-        return {"logits": scores, "text_mask": text_mask}
+        result = {"logits": scores, "text_mask": text_mask}
+        if self.technique == "span":
+            result["span_scores"] = pooled["span_scores"]
+            result["span_indices"] = pooled["span_indices"]
+        return result

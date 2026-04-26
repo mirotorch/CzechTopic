@@ -14,6 +14,7 @@ from transformers import AutoConfig, AutoModel, AutoTokenizer
 
 import wandb
 
+from .checkpoints import load_checkpoint, save_checkpoint
 from .collate import collate_fn
 from .config import CrossEncoderConfig
 from .model import TopicCrossEncoder
@@ -80,6 +81,12 @@ def main():
         default="bert-base-multilingual-cased",
         help="Pretrained model name (e.g., bert-base-multilingual-cased, robeczech)",
     )
+    parser.add_argument(
+        "--max-span-length",
+        type=int,
+        default=4,
+        help="Maximum text span length considered by the span extraction pooler.",
+    )
     args = parser.parse_args()
 
     wandb.init(
@@ -106,7 +113,12 @@ def main():
     config_dict = pretrained_bert.config.to_dict()
     config_dict["sep_token_id"] = tokenizer.sep_token_id
     config = CrossEncoderConfig(**config_dict)
-    model = TopicCrossEncoder(config, technique=args.technique, encoder=pretrained_bert)
+    model = TopicCrossEncoder(
+        config,
+        technique=args.technique,
+        encoder=pretrained_bert,
+        max_span_length=args.max_span_length,
+    )
     checkpoint_path = get_checkpoint_path(args.output_dir, args.technique, args.model_name)
 
     logger.info(
@@ -213,7 +225,15 @@ def main():
             best_f1 = best_val_f1
             best_threshold = best_epoch_threshold
             patience_counter = 0
-            torch.save(model.state_dict(), checkpoint_path)
+            save_checkpoint(
+                checkpoint_path,
+                model,
+                threshold=best_threshold,
+                technique=args.technique,
+                model_name=args.model_name,
+                max_span_length=args.max_span_length,
+                best_val_f1=best_f1,
+            )
             logger.info(
                 f"Saved best model to {checkpoint_path.name} (F1={best_f1:.4f}), "
                 f"best threshold is {best_threshold}"
@@ -228,7 +248,8 @@ def main():
 
     logger.info(f"\nTraining complete. Best val F1: {best_f1:.4f}")
 
-    model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+    checkpoint = load_checkpoint(checkpoint_path, map_location=device)
+    model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
 
     wandb.finish()

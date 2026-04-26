@@ -8,6 +8,7 @@ import torch
 from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModel, AutoConfig
 
+from .checkpoints import load_checkpoint
 from .config import CrossEncoderConfig
 from .model import TopicCrossEncoder
 from .predict import predictions_to_spans
@@ -21,7 +22,7 @@ def main():
     parser.add_argument("--model-name", type=str, default="bert-base-multilingual-cased")
     parser.add_argument("--data-dir", type=Path, required=True)
     parser.add_argument("--output-path", type=Path, required=True)
-    parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument("--threshold", type=float, default=None)
     parser.add_argument("--max-length", type=int, default=512)
     parser.add_argument(
         "--technique",
@@ -44,10 +45,15 @@ def main():
     config_dict['sep_token_id'] = tokenizer.sep_token_id
     config = CrossEncoderConfig(**config_dict)
     model = TopicCrossEncoder(config, technique=args.technique, encoder=encoder)
-    model.load_state_dict(torch.load(args.model_path, map_location=device))
+    checkpoint = load_checkpoint(args.model_path, map_location=device)
+    model.load_state_dict(checkpoint["model_state_dict"])
     model.to(device)
     model.eval()
+    threshold = (
+        args.threshold if args.threshold is not None else checkpoint.get("threshold", 0.5)
+    )
     print("Model loaded")
+    print(f"Using threshold: {threshold:.2f}")
 
     test_data = []
     for jsonl_path in sorted(args.data_dir.glob("*.jsonl")):
@@ -72,7 +78,7 @@ def main():
             probs = out["logits"].squeeze(0).cpu().numpy()
 
         annotations = predictions_to_spans(
-            item["text"], probs, encoded["offsets"].numpy(), threshold=args.threshold
+            item["text"], probs, encoded["offsets"].numpy(), threshold=threshold
         )
 
         predictions.append(
