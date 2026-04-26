@@ -68,7 +68,7 @@ class SpanExtractionPooler(nn.Module):
         topic_vector: [batch_size, hidden_size]
         text_mask: [batch_size, sequence_length]
         """
-        batch_size, seq_len, hidden_size = hidden_states.size()
+        batch_size, seq_len, _ = hidden_states.size()
         token_scores = hidden_states.new_full((batch_size, seq_len), float("-inf"))
         span_scores_per_batch = []
         span_indices_per_batch = []
@@ -115,12 +115,13 @@ class SpanExtractionPooler(nn.Module):
                 dim=-1,
             )
             span_scores = self.mlp(span_features).squeeze(-1)
-
-            for span_idx, (start_pos, end_pos) in enumerate(span_indices.tolist()):
-                token_scores[batch_idx, start_pos : end_pos + 1] = torch.maximum(
-                    token_scores[batch_idx, start_pos : end_pos + 1],
-                    span_scores[span_idx],
-                )
+            token_positions = torch.arange(seq_len, device=hidden_states.device).unsqueeze(0)
+            span_starts = span_indices[:, 0].unsqueeze(1)
+            span_ends = span_indices[:, 1].unsqueeze(1)
+            span_cover_mask = (token_positions >= span_starts) & (token_positions <= span_ends)
+            expanded_span_scores = span_scores.unsqueeze(1).expand(-1, seq_len)
+            covered_scores = expanded_span_scores.masked_fill(~span_cover_mask, float("-inf"))
+            token_scores[batch_idx] = covered_scores.max(dim=0).values
 
             span_scores_per_batch.append(span_scores)
             span_indices_per_batch.append(span_indices)
