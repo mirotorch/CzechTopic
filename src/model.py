@@ -143,6 +143,13 @@ class TopicCrossEncoder(PreTrainedModel):
 
         result = {"logits": scores, "text_mask": text_mask}
         if self.technique == "span":
-            result["span_scores"] = pooled["span_scores"]
+            result["span_scores"] = [
+                torch.clamp(
+                    torch.sigmoid((span_scores - self.bias) * self.temperature),
+                    min=1e-7,
+                    max=1.0 - 1e-7,
+                )
+                for span_scores in pooled["span_scores"]
+            ]
             result["span_indices"] = pooled["span_indices"]
         return result

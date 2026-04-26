@@ -8,6 +8,7 @@ import argparse
 from .checkpoints import load_checkpoint
 from .config import CrossEncoderConfig
 from .model import TopicCrossEncoder
+from .predict import span_predictions_to_spans
 
 def expand_subword_highlights(binary_preds, tokens):
     fixed_preds = list(binary_preds)
@@ -51,10 +52,14 @@ def main():
     config = AutoConfig.from_pretrained(args.model_name)
     config.sep_token_id = tokenizer.sep_token_id
     
-    model = TopicCrossEncoder(config, technique=args.technique)
+    checkpoint = load_checkpoint(args.model_path, map_location=device)
+    model = TopicCrossEncoder(
+        config,
+        technique=args.technique,
+        max_span_length=checkpoint.get("max_span_length", 4),
+    )
     
     print(f"Loading trained weights from {args.model_path}...")
-    checkpoint = load_checkpoint(args.model_path, map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])
     threshold = (
         args.threshold if args.threshold is not None else checkpoint.get("threshold", 0.90)
@@ -100,61 +105,70 @@ def main():
                 )
                 scores = outputs["logits"]
 
-            sep_positions = (inputs['input_ids'][0] == tokenizer.sep_token_id).nonzero(as_tuple=True)[0]
-            
-            if len(sep_positions) >= 2:
-                first_sep = sep_positions[0].item()
-                second_sep = sep_positions[1].item()
-                text_probs = scores[0, first_sep + 1: second_sep].tolist()
-                text_offsets = inputs['offset_mapping'][0, first_sep + 1: second_sep].tolist()
-                text_ids = inputs['input_ids'][0, first_sep + 1: second_sep].tolist()
-            elif len(sep_positions) == 1:
-                first_sep = sep_positions[0].item()
-                text_probs = scores[0, first_sep + 1: -1].tolist()
-                text_offsets = inputs['offset_mapping'][0, first_sep + 1: -1].tolist()
-                text_ids = inputs['input_ids'][0, first_sep + 1: -1].tolist()
+            if args.technique == "span":
+                annotations = span_predictions_to_spans(
+                    text,
+                    outputs["span_scores"][0],
+                    outputs["span_indices"][0],
+                    inputs["offset_mapping"][0],
+                    threshold=threshold,
+                )
             else:
-                text_probs = scores[0].tolist()
-                text_offsets = inputs['offset_mapping'][0].tolist()
-                text_ids = inputs['input_ids'][0].tolist()
-
-            text_tokens = tokenizer.convert_ids_to_tokens(text_ids)
-            binary_preds = [1 if p >= threshold else 0 for p in text_probs]
-            
-            expanded_preds = expand_subword_highlights(binary_preds, text_tokens)
-            smoothed_preds = smooth_highlights(expanded_preds)
-
-            annotations = []
-            in_span = False
-            current_start = None
-            current_end = None
-
-            for idx, is_highlight in enumerate(smoothed_preds):
-                start_char, end_char = text_offsets[idx]
+                sep_positions = (inputs['input_ids'][0] == tokenizer.sep_token_id).nonzero(as_tuple=True)[0]
                 
-                if start_char == 0 and end_char == 0:
-                    continue
-                    
-                if is_highlight == 1:
-                    if not in_span:
-                        in_span = True
-                        current_start = start_char
-                    current_end = end_char 
+                if len(sep_positions) >= 2:
+                    first_sep = sep_positions[0].item()
+                    second_sep = sep_positions[1].item()
+                    text_probs = scores[0, first_sep + 1: second_sep].tolist()
+                    text_offsets = inputs['offset_mapping'][0, first_sep + 1: second_sep].tolist()
+                    text_ids = inputs['input_ids'][0, first_sep + 1: second_sep].tolist()
+                elif len(sep_positions) == 1:
+                    first_sep = sep_positions[0].item()
+                    text_probs = scores[0, first_sep + 1: -1].tolist()
+                    text_offsets = inputs['offset_mapping'][0, first_sep + 1: -1].tolist()
+                    text_ids = inputs['input_ids'][0, first_sep + 1: -1].tolist()
                 else:
-                    if in_span:
-                        in_span = False
-                        annotations.append({
-                            "start": current_start,
-                            "end": current_end,
-                            "text_piece": text[current_start:current_end]
-                        })
+                    text_probs = scores[0].tolist()
+                    text_offsets = inputs['offset_mapping'][0].tolist()
+                    text_ids = inputs['input_ids'][0].tolist()
 
-            if in_span:
-                annotations.append({
-                    "start": current_start,
-                    "end": current_end,
-                    "text_piece": text[current_start:current_end]
-                })
+                text_tokens = tokenizer.convert_ids_to_tokens(text_ids)
+                binary_preds = [1 if p >= threshold else 0 for p in text_probs]
+                
+                expanded_preds = expand_subword_highlights(binary_preds, text_tokens)
+                smoothed_preds = smooth_highlights(expanded_preds)
+
+                annotations = []
+                in_span = False
+                current_start = None
+                current_end = None
+
+                for idx, is_highlight in enumerate(smoothed_preds):
+                    start_char, end_char = text_offsets[idx]
+                    
+                    if start_char == 0 and end_char == 0:
+                        continue
+                        
+                    if is_highlight == 1:
+                        if not in_span:
+                            in_span = True
+                            current_start = start_char
+                        current_end = end_char 
+                    else:
+                        if in_span:
+                            in_span = False
+                            annotations.append({
+                                "start": current_start,
+                                "end": current_end,
+                                "text_piece": text[current_start:current_end]
+                            })
+
+                if in_span:
+                    annotations.append({
+                        "start": current_start,
+                        "end": current_end,
+                        "text_piece": text[current_start:current_end]
+                    })
 
             output_obj = {
                 "text": text,

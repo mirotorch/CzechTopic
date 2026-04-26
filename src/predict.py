@@ -3,6 +3,8 @@
 import numpy as np
 import torch
 
+from .techniques import apply_nms
+
 
 def predictions_to_spans(text, probs, offsets, threshold=0.5):
     if isinstance(offsets, torch.Tensor):
@@ -71,6 +73,42 @@ def predictions_to_spans(text, probs, offsets, threshold=0.5):
             "end": int(end),
             "text_piece": text_piece
         })
+
+    return annotations
+
+
+def span_predictions_to_spans(text, span_scores, span_indices, offsets, threshold=0.5):
+    if isinstance(offsets, torch.Tensor):
+        offsets = offsets.cpu().numpy()
+    if isinstance(span_scores, torch.Tensor):
+        span_scores = span_scores.detach().cpu().numpy()
+    if isinstance(span_indices, torch.Tensor):
+        span_indices = span_indices.detach().cpu().numpy()
+
+    candidate_spans = []
+    candidate_scores = []
+
+    for (start_idx, end_idx), score in zip(span_indices, span_scores):
+        start_char, _ = offsets[start_idx]
+        _, end_char = offsets[end_idx]
+
+        if (start_char == 0 and end_char == 0) or end_char <= start_char:
+            continue
+
+        candidate_spans.append((int(start_char), int(end_char)))
+        candidate_scores.append(float(score))
+
+    selected_spans = apply_nms(candidate_spans, candidate_scores, threshold=threshold)
+
+    annotations = []
+    for (start, end), _ in selected_spans:
+        annotations.append(
+            {
+                "start": int(start),
+                "end": int(end),
+                "text_piece": text[start:end],
+            }
+        )
 
     return annotations
 

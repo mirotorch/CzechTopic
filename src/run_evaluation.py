@@ -11,7 +11,7 @@ from transformers import AutoTokenizer, AutoModel, AutoConfig
 from .checkpoints import load_checkpoint
 from .config import CrossEncoderConfig
 from .model import TopicCrossEncoder
-from .predict import predictions_to_spans
+from .predict import predictions_to_spans, span_predictions_to_spans
 from .techniques import TECHNIQUE_FACTORIES
 from .tokenizer import CrossEncoderTokenizer
 
@@ -39,13 +39,18 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     tokenizer_wrapper = CrossEncoderTokenizer(tokenizer, max_length=args.max_length)
 
+    checkpoint = load_checkpoint(args.model_path, map_location=device)
     base_config = AutoConfig.from_pretrained(args.model_name)
     encoder = AutoModel.from_pretrained(args.model_name)
     config_dict = base_config.to_dict()
     config_dict['sep_token_id'] = tokenizer.sep_token_id
     config = CrossEncoderConfig(**config_dict)
-    model = TopicCrossEncoder(config, technique=args.technique, encoder=encoder)
-    checkpoint = load_checkpoint(args.model_path, map_location=device)
+    model = TopicCrossEncoder(
+        config,
+        technique=args.technique,
+        encoder=encoder,
+        max_span_length=checkpoint.get("max_span_length", 4),
+    )
     model.load_state_dict(checkpoint["model_state_dict"])
     model.to(device)
     model.eval()
@@ -77,9 +82,18 @@ def main():
             out = model(**inputs)
             probs = out["logits"].squeeze(0).cpu().numpy()
 
-        annotations = predictions_to_spans(
-            item["text"], probs, encoded["offsets"].numpy(), threshold=threshold
-        )
+        if args.technique == "span":
+            annotations = span_predictions_to_spans(
+                item["text"],
+                out["span_scores"][0],
+                out["span_indices"][0],
+                encoded["offsets"].numpy(),
+                threshold=threshold,
+            )
+        else:
+            annotations = predictions_to_spans(
+                item["text"], probs, encoded["offsets"].numpy(), threshold=threshold
+            )
 
         predictions.append(
             {
