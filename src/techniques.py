@@ -132,31 +132,31 @@ class SpanExtractionPooler(nn.Module):
             "span_indices": span_indices_per_batch,
         }
 
-    def apply_nms(spans, scores, threshold=0.85):
-        """
-        Filters overlapping predictions, keeping only the best ones.
-        spans: List of tuples (start_idx, end_idx)
-        scores: List of floats (cosine similarity scores)
-        """
-        valid_predictions = [(span, score) for span, score in zip(spans, scores) if score >= threshold]
-        valid_predictions.sort(key=lambda x: x[1], reverse=True)
+def apply_nms(spans, scores, threshold=0.85):
+    """
+    Filters overlapping predictions, keeping only the best ones.
+    spans: List of tuples (start_idx, end_idx)
+    scores: List of floats (cosine similarity scores)
+    """
+    valid_predictions = [(span, score) for span, score in zip(spans, scores) if score >= threshold]
+    valid_predictions.sort(key=lambda x: x[1], reverse=True)
 
-        approved_spans = []
+    approved_spans = []
 
-        for current_span, current_score in valid_predictions:
-            overlap = False
-            current_start, current_end = current_span
+    for current_span, current_score in valid_predictions:
+        overlap = False
+        current_start, current_end = current_span
 
-            for approved_span, _ in approved_spans:
-                app_start, app_end = approved_span
-                if current_start <= app_end and current_end >= app_start:
-                    overlap = True
-                    break
+        for approved_span, _ in approved_spans:
+            app_start, app_end = approved_span
+            if current_start <= app_end and current_end >= app_start:
+                overlap = True
+                break
 
-            if not overlap:
-                approved_spans.append((current_span, current_score))
+        if not overlap:
+            approved_spans.append((current_span, current_score))
 
-        return approved_spans
+    return approved_spans
 
 TECHNIQUE_FACTORIES = {
     "max": lambda **_: MaxPooler(),
