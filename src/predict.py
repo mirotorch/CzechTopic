@@ -77,18 +77,23 @@ def predictions_to_spans(text, probs, offsets, threshold=0.5):
     return annotations
 
 
-def span_predictions_to_spans(text, span_scores, span_indices, offsets, threshold=0.5):
-    if isinstance(offsets, torch.Tensor):
+def span_predictions_to_spans(text, span_scores, span_indices, offsets, threshold=0.5, max_char_gap=5):
+    # Safely convert PyTorch tensors to Numpy
+    if hasattr(offsets, "cpu"):
         offsets = offsets.cpu().numpy()
-    if isinstance(span_scores, torch.Tensor):
+    if hasattr(span_scores, "cpu"):
         span_scores = span_scores.detach().cpu().numpy()
-    if isinstance(span_indices, torch.Tensor):
+    if hasattr(span_indices, "cpu"):
         span_indices = span_indices.detach().cpu().numpy()
 
     candidate_spans = []
     candidate_scores = []
 
     for (start_idx, end_idx), score in zip(span_indices, span_scores):
+        # OPTIMIZATION: Ignore garbage scores immediately before doing any offset math
+        if score < threshold:
+            continue
+            
         start_char, _ = offsets[start_idx]
         _, end_char = offsets[end_idx]
 
@@ -98,17 +103,39 @@ def span_predictions_to_spans(text, span_scores, span_indices, offsets, threshol
         candidate_spans.append((int(start_char), int(end_char)))
         candidate_scores.append(float(score))
 
+    # Apply Non-Maximum Suppression to remove overlapping duplicates
     selected_spans = apply_nms(candidate_spans, candidate_scores, threshold=threshold)
+    
+    # Sort them by their position in the text (Left to Right)
+    selected_spans.sort(key=lambda x: x[0][0])
 
     annotations = []
-    for (start, end), _ in selected_spans:
-        annotations.append(
-            {
-                "start": int(start),
-                "end": int(end),
-                "text_piece": text[start:end],
-            }
-        )
+    
+    # GAP BRIDGING: Connect spans that are fragmented by small words (like "a" or "že")
+    if selected_spans:
+        current_start, current_end = selected_spans[0][0]
+        
+        for i in range(1, len(selected_spans)):
+            next_start, next_end = selected_spans[i][0]
+            
+            # If the characters between the spans are fewer than max_char_gap, merge them!
+            if next_start - current_end <= max_char_gap:
+                current_end = max(current_end, next_end)
+            else:
+                # Gap is too big, save the current span and start a new one
+                annotations.append({
+                    "start": int(current_start),
+                    "end": int(current_end),
+                    "text_piece": text[current_start:current_end],
+                })
+                current_start, current_end = next_start, next_end
+                
+        # Append the very last span
+        annotations.append({
+            "start": int(current_start),
+            "end": int(current_end),
+            "text_piece": text[current_start:current_end],
+        })
 
     return annotations
 
