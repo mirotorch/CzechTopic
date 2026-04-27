@@ -78,7 +78,6 @@ def predictions_to_spans(text, probs, offsets, threshold=0.5):
 
 
 def span_predictions_to_spans(text, span_scores, span_indices, offsets, threshold=0.5, max_char_gap=5):
-    # Safely convert PyTorch tensors to Numpy
     if hasattr(offsets, "cpu"):
         offsets = offsets.cpu().numpy()
     if hasattr(span_scores, "cpu"):
@@ -90,7 +89,6 @@ def span_predictions_to_spans(text, span_scores, span_indices, offsets, threshol
     candidate_scores = []
 
     for (start_idx, end_idx), score in zip(span_indices, span_scores):
-        # OPTIMIZATION: Ignore garbage scores immediately before doing any offset math
         if score < threshold:
             continue
             
@@ -100,42 +98,50 @@ def span_predictions_to_spans(text, span_scores, span_indices, offsets, threshol
         if (start_char == 0 and end_char == 0) or end_char <= start_char:
             continue
 
+        while start_char > 0 and text[start_char - 1].isalnum():
+            start_char -= 1
+        while end_char < len(text) and text[end_char].isalnum():
+            end_char += 1
+
         candidate_spans.append((int(start_char), int(end_char)))
         candidate_scores.append(float(score))
 
-    # Apply Non-Maximum Suppression to remove overlapping duplicates
     selected_spans = apply_nms(candidate_spans, candidate_scores, threshold=threshold)
-    
-    # Sort them by their position in the text (Left to Right)
     selected_spans.sort(key=lambda x: x[0][0])
 
     annotations = []
     
-    # GAP BRIDGING: Connect spans that are fragmented by small words (like "a" or "že")
+    # Gap Bridging (to fix fragmentation)
     if selected_spans:
         current_start, current_end = selected_spans[0][0]
         
         for i in range(1, len(selected_spans)):
             next_start, next_end = selected_spans[i][0]
             
-            # If the characters between the spans are fewer than max_char_gap, merge them!
             if next_start - current_end <= max_char_gap:
                 current_end = max(current_end, next_end)
             else:
-                # Gap is too big, save the current span and start a new one
-                annotations.append({
-                    "start": int(current_start),
-                    "end": int(current_end),
-                    "text_piece": text[current_start:current_end],
-                })
+                extracted_string = text[current_start:current_end].strip()
+                if extracted_string:
+                    real_start = text.find(extracted_string, current_start)
+                    real_end = real_start + len(extracted_string)
+                    
+                    annotations.append({
+                        "start": real_start,
+                        "end": real_end,
+                        "text_piece": extracted_string,
+                    })
                 current_start, current_end = next_start, next_end
                 
-        # Append the very last span
-        annotations.append({
-            "start": int(current_start),
-            "end": int(current_end),
-            "text_piece": text[current_start:current_end],
-        })
+        extracted_string = text[current_start:current_end].strip()
+        if extracted_string:
+            real_start = text.find(extracted_string, current_start)
+            real_end = real_start + len(extracted_string)
+            annotations.append({
+                "start": real_start,
+                "end": real_end,
+                "text_piece": extracted_string,
+            })
 
     return annotations
 
