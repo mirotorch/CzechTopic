@@ -82,7 +82,7 @@ def main():
             out = model(**inputs)
             probs = out["logits"].squeeze(0).cpu().numpy()
 
-        if args.technique == "span":
+        if args.technique in {"span", "span-max"}:
             annotations = span_predictions_to_spans(
                 item["text"],
                 out["span_scores"][0],

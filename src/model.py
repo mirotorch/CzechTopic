@@ -122,6 +122,14 @@ class TopicCrossEncoder(PreTrainedModel):
                 text_mask=text_mask,
             )
             sim_agg = pooled["token_scores"]
+        elif self.technique == "span-max":
+            pooled = self.pooler(
+                hidden_states=hidden,
+                topic_hidden=topic_hidden,
+                topic_mask=topic_mask,
+                text_mask=text_mask,
+            )
+            sim_agg = pooled["token_scores"]
         else:
             topic_hidden_norm = F.normalize(topic_hidden, p=2, dim=-1)
             text_hidden_norm = F.normalize(text_hidden, p=2, dim=-1)
@@ -142,7 +150,7 @@ class TopicCrossEncoder(PreTrainedModel):
         scores = scores * text_mask.float()
 
         result = {"logits": scores, "text_mask": text_mask}
-        if self.technique == "span":
+        if self.technique in {"span", "span-max"}:
             result["span_scores"] = [
                 torch.clamp(
                     torch.sigmoid((span_scores - self.bias) * self.temperature),

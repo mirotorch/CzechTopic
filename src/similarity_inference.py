@@ -105,7 +105,7 @@ def main():
                 )
                 scores = outputs["logits"]
 
-            if args.technique == "span":
+            if args.technique in {"span", "span-max"}:
                 annotations = span_predictions_to_spans(
                     text,
                     outputs["span_scores"][0],
