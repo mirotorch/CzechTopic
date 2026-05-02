@@ -36,6 +36,7 @@ def main():
     parser.add_argument("--output-file", type=str, default="./output/predictions.jsonl")
     parser.add_argument("--threshold", type=float, default=None)
     parser.add_argument("--technique", type=str, default="top3")
+    parser.add_argument("--max-span-length", type=int, default=None)
     args = parser.parse_args()
 
     if torch.cuda.is_available():
@@ -53,10 +54,15 @@ def main():
     config.sep_token_id = tokenizer.sep_token_id
     
     checkpoint = load_checkpoint(args.model_path, map_location=device)
+    max_span_length = (
+        args.max_span_length
+        if args.max_span_length is not None
+        else checkpoint.get("max_span_length", 4)
+    )
     model = TopicCrossEncoder(
         config,
         technique=args.technique,
-        max_span_length=checkpoint.get("max_span_length", 4),
+        max_span_length=max_span_length,
     )
     
     print(f"Loading trained weights from {args.model_path}...")
@@ -68,6 +74,8 @@ def main():
     model.to(device)
     model.eval()
     print(f"Using threshold: {threshold:.2f}")
+    if args.technique in {"span", "span-max"}:
+        print(f"Using max span length: {max_span_length}")
 
     print(f"Reading CSVs and grouping by cluster...")
     texts_df = pd.read_csv(args.texts_csv, sep='\t', encoding='utf-8')
