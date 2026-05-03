@@ -99,7 +99,7 @@ class SpanExtractionPooler(nn.Module):
         self.max_span_length = max_span_length
         self.length_embedding = nn.Embedding(max_span_length + 1, length_embedding_size)
         self.mlp = nn.Sequential(
-            nn.Linear(hidden_size * 3 + length_embedding_size, hidden_size),
+            nn.Linear(hidden_size * 4 + length_embedding_size, hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, 1),
         )
@@ -130,11 +130,12 @@ class SpanExtractionPooler(nn.Module):
 
             start_vectors = hidden_states[batch_idx, span_indices[:, 0], :]
             end_vectors = hidden_states[batch_idx, span_indices[:, 1], :]
+            mean_vectors = compute_span_mean_vectors(hidden_states[batch_idx], span_indices)
             repeated_topic = topic_vector[batch_idx].unsqueeze(0).expand_as(start_vectors)
             length_vectors = self.length_embedding(span_lengths)
 
             span_features = torch.cat(
-                [repeated_topic, start_vectors, end_vectors, length_vectors],
+                [repeated_topic, start_vectors, end_vectors, mean_vectors, length_vectors],
                 dim=-1,
             )
             span_scores = self.mlp(span_features).squeeze(-1)
